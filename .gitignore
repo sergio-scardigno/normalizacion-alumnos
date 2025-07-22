@@ -32,3 +32,7 @@ Thumbs.db
 # Otros
 *.swp
 *.swo
+
+fp_alumnos.csv
+*.csv
+/alumnos
