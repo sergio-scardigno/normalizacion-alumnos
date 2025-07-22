@@ -1,6 +1,11 @@
-# Normalización de Localidades, Distritos y Provincias de Alumnos
+# Normalización de Datos de Alumnos (Ubicación y Nacionalidad)
 
-Este proyecto contiene un script en Python (`analizar_csv.py`) que permite normalizar y auditar los datos de ubicación (localidad, distrito, provincia) de un archivo CSV de alumnos, utilizando una API de geodatos y un archivo auxiliar de localidades y códigos postales.
+Este proyecto incluye dos scripts principales en Python:
+
+- `analizar_csv.py`: normaliza y audita las columnas de **localidad**, **distrito**, **provincia** y **código postal** mediante una API de geodatos y un archivo auxiliar de localidades.
+- `agregar_nacionalidad_csv.py`: analiza la columna **nacionalidad** para determinar si el alumno es argentino y normaliza el texto de la nacionalidad con ayuda de un modelo LLM local (Ollama).
+
+Cada uno genera un CSV de salida con columnas adicionales que facilitan la auditoría.
 
 ## ¿Qué hace el script?
 
@@ -59,8 +64,34 @@ Esto generará un archivo `ubicaciones_normalizadas_51_100.csv`.
 ## Requisitos
 - Python 3
 - Paquete `requests` (puedes instalarlo con `pip install requests`)
+- [Ollama](https://ollama.ai/) en funcionamiento en `http://localhost:11434` con un modelo cargado (por defecto se usa `llama3:8b`)
+
+## Scripts de Nacionalidad (`agregar_nacionalidad_csv.py` y `analizar_csv.py`)
+
+### ¿Qué hacen estos scripts?
+
+- `analizar_csv.py` contiene la función `analizar_nacionalidad()` que usa reglas heurísticas y un modelo LLM local para clasificar y normalizar nacionalidades.
+- `agregar_nacionalidad_csv.py` aplica esa función a todas las filas de un CSV y agrega tres columnas nuevas.
+
+### Columnas añadidas por `agregar_nacionalidad_csv.py`
+
+- **es_argentino**: `true`/`false` si la nacionalidad corresponde a Argentina.
+- **nacionalidad_normalizada**: Texto normalizado de la nacionalidad.
+- **confianza_nacionalidad**: Nivel de confianza (`alta`, `media`, `baja`).
+
+### Ejemplos de uso
+
+```bash
+# Procesar todo el archivo
+python agregar_nacionalidad_csv.py --entrada fp_alumnos.csv --salida fp_alumnos_nacionalidad.csv --hilos 8
+
+# Procesar sólo 500 filas
+python agregar_nacionalidad_csv.py --muestras 500
+```
+
+---
 
 ## Notas
 - El archivo original **nunca se modifica**.
-- El script es robusto ante errores de codificación y prioriza siempre el código postal para la normalización.
-- Si tienes dudas sobre alguna columna o el funcionamiento, revisa los comentarios en el código fuente. 
+- Los scripts son robustos ante errores de codificación y priorizan siempre la mejor fuente de datos disponible.
+- Si tienes dudas sobre alguna columna o el funcionamiento, revisa los comentarios en el código fuente.
