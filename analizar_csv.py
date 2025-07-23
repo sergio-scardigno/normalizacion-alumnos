@@ -1,4 +1,4 @@
-# analizar_csv.py mejorado con limpieza de nacionalidades y cache persistente
+# analizar_csv.py mejorado con limpieza de nacionalidades, IA Ollama, y cache persistente
 
 import csv
 import requests
@@ -7,11 +7,7 @@ import re
 import time
 import json
 import shelve
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# =====================
-# CACHE Y SINONIMOS
-# =====================
 _cache_archivo = "cache_nacionalidades.db"
 
 NACIONALIDADES_SINONIMOS = {
@@ -40,9 +36,6 @@ localidades_comunes = {
     "general rodriguez", "san isidro", "quilmes"
 }
 
-# =====================
-# FUNCIONES AUXILIARES
-# =====================
 
 def limpiar_texto(texto):
     if not texto:
@@ -54,6 +47,7 @@ def limpiar_texto(texto):
     texto = ''.join(c for c in texto if c.isprintable())
     return texto
 
+
 def normalizar_str(s):
     if not isinstance(s, str):
         return s
@@ -61,6 +55,7 @@ def normalizar_str(s):
     s = unicodedata.normalize('NFD', s)
     s = ''.join(c for c in s if unicodedata.category(c) != 'Mn')
     return s
+
 
 def consultar_ollama(prompt, modelo="llama3:8b", url_ollama="http://localhost:11434", max_retries=3, timeout_seconds=60):
     payload = {
@@ -85,90 +80,74 @@ def consultar_ollama(prompt, modelo="llama3:8b", url_ollama="http://localhost:11
             print(f"Error al consultar Ollama: {e}")
             return None
 
-# =====================
-# FUNCION PRINCIPAL
-# =====================
 
-def analizar_nacionalidad(nacionalidad_texto):
-    texto_clave = limpiar_texto(nacionalidad_texto or "").lower()
-    clave_normalizada = normalizar_str(texto_clave)
+def analizar_nacionalidad(nacionalidad_texto, lugar_nacimiento=None):
+    nacionalidad = limpiar_texto(nacionalidad_texto or "")
+    nacimiento = limpiar_texto(lugar_nacimiento or "")
+    clave_cache = normalizar_str(f"{nacionalidad}|{nacimiento}")
 
     with shelve.open(_cache_archivo) as cache:
-        if clave_normalizada in cache:
-            return cache[clave_normalizada]
+        if clave_cache in cache:
+            return cache[clave_cache]
 
-        if clave_normalizada in NACIONALIDADES_SINONIMOS:
-            valor = NACIONALIDADES_SINONIMOS[clave_normalizada]
-            resultado = {
-                "es_argentino": valor.lower() == "argentina",
-                "nacionalidad_normalizada": valor,
-                "confianza": "alta" if valor != "No especificada" else "baja"
-            }
-            cache[clave_normalizada] = resultado
-            return resultado
+        prompt = f"""Dado el siguiente registro, responde en formato JSON la nacionalidad real basada en lugar de nacimiento y nacionalidad reportada. Priorizá el lugar de nacimiento si hay contradicción.
 
-        if len(clave_normalizada) < 3 or not clave_normalizada.isalpha():
-            resultado = {
-                "es_argentino": False,
-                "nacionalidad_normalizada": "No especificada",
-                "confianza": "baja"
-            }
-            cache[clave_normalizada] = resultado
-            return resultado
+Datos:
+- Nacionalidad declarada: "{nacionalidad}"
+- Lugar de nacimiento: "{nacimiento}"
 
-        if clave_normalizada in localidades_comunes:
-            resultado = {
-                "es_argentino": True,
-                "nacionalidad_normalizada": "Argentina",
-                "confianza": "media"
-            }
-            cache[clave_normalizada] = resultado
-            return resultado
-
-        prompt = f"""Analiza la siguiente nacionalidad y responde con un JSON valido:
-
-Nacionalidad: \"{nacionalidad_texto}\"
-
-Formato:
+Formato de respuesta:
 {{
-  \"es_argentino\": true/false,
-  \"nacionalidad_normalizada\": \"...\",
-  \"confianza\": \"alta/media/baja\"
+  "es_argentino": true/false,
+  "nacionalidad_normalizada": "Nombre del país",
+  "confianza": "alta" / "media" / "baja"
 }}
 
-Solo responde el JSON, sin texto adicional."""
+Solo responde el JSON. No agregues explicación ni texto adicional."""
 
         respuesta = consultar_ollama(prompt)
-        resultado = {
-            'es_argentino': False,
-            'nacionalidad_normalizada': nacionalidad_texto,
-            'confianza': 'baja'
-        }
+
+        # DEBUG
+        if not respuesta or not respuesta.strip():
+            print(f"🟥 Respuesta vacía de Ollama para:\n→ Nacionalidad: {nacionalidad}\n→ Lugar de nacimiento: {nacimiento}")
+        else:
+            print(f"\n🟡 Respuesta de Ollama:\n{respuesta}\n")
 
         try:
-            inicio = respuesta.find('{')
-            fin = respuesta.rfind('}') + 1
-            json_str = respuesta[inicio:fin]
-            parsed = json.loads(json_str)
-            if all(k in parsed for k in resultado):
-                resultado = parsed
-        except:
-            if 'argentin' in respuesta.lower():
-                resultado = {
-                    'es_argentino': True,
-                    'nacionalidad_normalizada': 'Argentina',
-                    'confianza': 'media'
-                }
+            if not respuesta or not respuesta.strip():
+                raise ValueError("Respuesta vacía de Ollama")
 
-        cache[clave_normalizada] = resultado
+            inicio = respuesta.find("{")
+            fin = respuesta.rfind("}") + 1
+            if inicio == -1 or fin == -1:
+                raise ValueError("No se encontró JSON válido en la respuesta")
+
+            json_str = respuesta[inicio:fin]
+            resultado = json.loads(json_str)
+
+            if not all(k in resultado for k in ["es_argentino", "nacionalidad_normalizada", "confianza"]):
+                raise ValueError("JSON incompleto")
+
+        except Exception as e:
+            print(f"❌ Error procesando con IA: {e}")
+            print(f"🟥 Respuesta cruda:\n{respuesta}")
+            resultado = {
+                "es_argentino": False,
+                "nacionalidad_normalizada": nacionalidad or "No especificada",
+                "confianza": "baja"
+            }
+
+        cache[clave_cache] = resultado
         return resultado
 
-# =====================
-# EJEMPLO DE PRUEBA
-# =====================
+
+# Prueba rápida
 if __name__ == "__main__":
     ejemplos = [
-        "Argentinian", "ATGENTINA", "extraterrestre", "sin dato", "Avellaneda", "brasil", "francesa"
+        {"nacionalidad": "Argentinian", "lugar_nacimiento": "Perú"},
+        {"nacionalidad": "extraterrestre", "lugar_nacimiento": "Buenos Aires"},
+        {"nacionalidad": "Paraguay", "lugar_nacimiento": ""},
+        {"nacionalidad": "", "lugar_nacimiento": "Avellaneda"},
     ]
     for e in ejemplos:
-        print(f"{e} → {analizar_nacionalidad(e)}")
+        print(f"{e} → {analizar_nacionalidad(e['nacionalidad'], e['lugar_nacimiento'])}")
